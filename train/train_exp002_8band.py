@@ -1,3 +1,4 @@
+
 import csv
 
 import json
@@ -22,14 +23,6 @@ from torch.utils.data import DataLoader, Dataset
 
 
 
-# ---------------------------------------------------------
-
-# Project setup
-
-# ---------------------------------------------------------
-
-
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -46,195 +39,71 @@ from model.model_8band import build_8band_maskrcnn
 
 
 
-# ---------------------------------------------------------
-
-# Experiment
-
-# ---------------------------------------------------------
-
-
-
 EXP_NAME = "EXP002_8Band_MaskRCNN_SOL"
 
 SEED = 42
 
 
 
-release_root = Path(
+DATA_ROOT = Path(
 
-    os.environ.get(
-
-        "GEOAI_ARCTIC_DATA",
-
-        PROJECT_ROOT / "competition_release",
-
-    )
+    os.environ.get("GEOAI_ARCTIC_DATA", PROJECT_ROOT / "competition_release")
 
 )
 
-split_path = PROJECT_ROOT / "data" / "split_v1_groupaware.csv"
+SPLIT_PATH = PROJECT_ROOT / "data" / "split_v1_groupaware.csv"
 
-preprocessing_path = PROJECT_ROOT / "data" / "preprocessing_v1.json"
+PREPROCESSING_PATH = PROJECT_ROOT / "data" / "preprocessing_v1.json"
 
 
 
-experiment_dir = PROJECT_ROOT / "experiments" / EXP_NAME
+EXPERIMENT_DIR = PROJECT_ROOT / "experiments" / EXP_NAME
 
-checkpoint_dir = experiment_dir / "checkpoints"
+CHECKPOINT_DIR = EXPERIMENT_DIR / "checkpoints"
 
-prediction_dir = experiment_dir / "predictions"
+LOG_PATH = EXPERIMENT_DIR / "training_log.csv"
 
 
 
-experiment_dir.mkdir(parents=True, exist_ok=True)
+TRAINING = {
 
-checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    "batch_size": 2,
 
-prediction_dir.mkdir(parents=True, exist_ok=True)
+    "epochs": 10,
 
+    "learning_rate": 0.005,
 
+    "momentum": 0.9,
 
+    "weight_decay": 0.0005,
 
-
-# ---------------------------------------------------------
-
-# Reproducibility
-
-# ---------------------------------------------------------
-
-
-
-random.seed(SEED)
-
-np.random.seed(SEED)
-
-torch.manual_seed(SEED)
-
-torch.cuda.manual_seed_all(SEED)
-
-
-
-torch.backends.cudnn.deterministic = True
-
-torch.backends.cudnn.benchmark = False
-
-
-
-
-
-# ---------------------------------------------------------
-
-# Configuration
-
-# ---------------------------------------------------------
-
-
-
-exp_config = {
-
-    "experiment_name": EXP_NAME,
-
-
-
-    "model": {
-
-        "architecture": "Mask R-CNN",
-
-        "backbone": "ResNet-50-FPN",
-
-        "initialization": "COCO pretrained",
-
-        "num_classes": 2,
-
-        "input_bands": ["red", "green", "blue", "ndvi", "relative_elevation", "shaded_relief", "nir", "ndwi"],
-
-    },
-
-
-
-    "data": {
-
-        "split": "split_v1_groupaware.csv",
-
-        "train_images": 605,
-
-        "val_images": 151,
-
-        "nan_policy": "training-band mean imputation",
-
-        "normalization": "training-fold per-band z-score",
-
-        "input_channels": 8,
-
-    },
-
-
-
-    "training": {
-
-        "batch_size": 2,
-
-        "epochs": 10,
-
-        "optimizer": "SGD",
-
-        "learning_rate": 0.005,
-
-        "momentum": 0.9,
-
-        "weight_decay": 0.0005,
-
-        "seed": SEED,
-
-        "num_workers": 2,
-
-    },
-
-
-
-    "hardware": {
-
-        "platform": "ASU Sol",
-
-        "gpu": torch.cuda.get_device_name(0)
-
-        if torch.cuda.is_available()
-
-        else "CPU",
-
-    },
+    "num_workers": 2,
 
 }
 
 
 
-config_path = experiment_dir / "config.json"
+LOSS_NAMES = [
+
+    "loss_classifier",
+
+    "loss_box_reg",
+
+    "loss_mask",
+
+    "loss_objectness",
+
+    "loss_rpn_box_reg",
+
+]
 
 
 
-with open(config_path, "w") as f:
-
-    json.dump(exp_config, f, indent=2)
 
 
+class RTS8BandDataset(Dataset):
 
-
-
-# ---------------------------------------------------------
-
-# 8-band dataset wrapper
-
-# ---------------------------------------------------------
-
-
-
-class RTSExtendedDataset(Dataset):
-
-    """
-
-    Combine RTSRawDataset with EXP002 8-band preprocessing.
-
-    """
+    """Apply EXP002 preprocessing to the raw RTS dataset."""
 
 
 
@@ -258,27 +127,21 @@ class RTSExtendedDataset(Dataset):
 
 
 
-        # Raw loader returns CHW. Preprocessor expects HWC.
+        # Raw loader returns CHW; the preprocessor works in HWC.
 
-        image_hwc = image.numpy().transpose(1, 2, 0)
+        image = image.numpy().transpose(1, 2, 0)
 
-
-
-        image_8band = self.preprocessor.prepare_8band_maskrcnn(image_hwc)
+        image = self.preprocessor.prepare_8band_maskrcnn(image)
 
 
 
-        image_tensor = torch.from_numpy(image_8band).float()
-
-
-
-        return image_tensor, target
+        return torch.from_numpy(image).float(), target
 
 
 
 
 
-def detection_collate_fn(batch):
+def collate_fn(batch):
 
     images, targets = zip(*batch)
 
@@ -288,495 +151,275 @@ def detection_collate_fn(batch):
 
 
 
-# ---------------------------------------------------------
+def set_seed(seed=SEED):
 
-# Datasets
+    random.seed(seed)
 
-# ---------------------------------------------------------
+    np.random.seed(seed)
 
+    torch.manual_seed(seed)
 
+    torch.cuda.manual_seed_all(seed)
 
-preprocessor = RTS8BandPreprocessor(preprocessing_path)
 
 
+    torch.backends.cudnn.deterministic = True
 
-train_raw_dataset = RTSRawDataset(
+    torch.backends.cudnn.benchmark = False
 
-    release_root=release_root,
 
-    split_csv=split_path,
 
-    fold="train",
 
-)
 
+def build_dataloaders():
 
+    preprocessor = RTS8BandPreprocessor(PREPROCESSING_PATH)
 
-val_raw_dataset = RTSRawDataset(
 
-    release_root=release_root,
 
-    split_csv=split_path,
+    def make_dataset(fold):
 
-    fold="val",
+        raw = RTSRawDataset(
 
-)
+            release_root=DATA_ROOT,
 
+            split_csv=SPLIT_PATH,
 
+            fold=fold,
 
-band8_train_dataset = RTSExtendedDataset(
+        )
 
-    train_raw_dataset,
+        return RTS8BandDataset(raw, preprocessor)
 
-    preprocessor,
 
-)
 
+    train_dataset = make_dataset("train")
 
+    val_dataset = make_dataset("val")
 
-band8_val_dataset = RTSExtendedDataset(
 
-    val_raw_dataset,
 
-    preprocessor,
+    train_loader = DataLoader(
 
-)
+        train_dataset,
 
+        batch_size=TRAINING["batch_size"],
 
+        shuffle=True,
 
+        num_workers=TRAINING["num_workers"],
 
+        collate_fn=collate_fn,
 
-# ---------------------------------------------------------
-
-# DataLoaders
-
-# ---------------------------------------------------------
-
-
-
-train_loader = DataLoader(
-
-    band8_train_dataset,
-
-    batch_size=exp_config["training"]["batch_size"],
-
-    shuffle=True,
-
-    num_workers=exp_config["training"]["num_workers"],
-
-    collate_fn=detection_collate_fn,
-
-    pin_memory=True,
-
-)
-
-
-
-val_loader = DataLoader(
-
-    band8_val_dataset,
-
-    batch_size=exp_config["training"]["batch_size"],
-
-    shuffle=False,
-
-    num_workers=exp_config["training"]["num_workers"],
-
-    collate_fn=detection_collate_fn,
-
-    pin_memory=True,
-
-)
-
-
-
-
-
-# ---------------------------------------------------------
-
-# Device
-
-# ---------------------------------------------------------
-
-
-
-device = torch.device(
-
-    "cuda" if torch.cuda.is_available() else "cpu"
-
-)
-
-
-
-if device.type != "cuda":
-
-    raise RuntimeError(
-
-        "EXP002_SOL is intended to run on a CUDA GPU."
+        pin_memory=True,
 
     )
 
 
 
+    val_loader = DataLoader(
 
+        val_dataset,
 
-# ---------------------------------------------------------
+        batch_size=TRAINING["batch_size"],
 
-# Model
+        shuffle=False,
 
-# ---------------------------------------------------------
+        num_workers=TRAINING["num_workers"],
 
+        collate_fn=collate_fn,
 
+        pin_memory=True,
 
-model = build_8band_maskrcnn(
+    )
 
-    pretrained=True
 
-)
 
+    return train_dataset, val_dataset, train_loader, val_loader
 
 
-model = model.to(device)
 
 
 
+def experiment_config():
 
+    return {
 
-# ---------------------------------------------------------
+        "experiment_name": EXP_NAME,
 
-# Optimizer
+        "model": {
 
-# ---------------------------------------------------------
+            "architecture": "Mask R-CNN",
 
+            "backbone": "ResNet-50-FPN",
 
+            "initialization": "COCO pretrained",
 
-optimizer = torch.optim.SGD(
+            "num_classes": 2,
 
-    model.parameters(),
+            "input_bands": [
 
-    lr=exp_config["training"]["learning_rate"],
+                "red",
 
-    momentum=exp_config["training"]["momentum"],
+                "green",
 
-    weight_decay=exp_config["training"]["weight_decay"],
+                "blue",
 
-)
+                "ndvi",
 
+                "relative_elevation",
 
+                "shaded_relief",
 
-num_epochs = exp_config["training"]["epochs"]
+                "nir",
 
+                "ndwi",
 
+            ],
 
+        },
 
+        "data": {
 
-# ---------------------------------------------------------
+            "split": "split_v1_groupaware.csv",
 
-# Training log
+            "train_images": 605,
 
-# ---------------------------------------------------------
+            "val_images": 151,
 
+            "nan_policy": "training-band mean imputation",
 
+            "normalization": "training-fold per-band z-score",
 
-log_path = experiment_dir / "training_log.csv"
+            "input_channels": 8,
 
+        },
 
+        "training": {
 
-with open(log_path, "w", newline="") as f:
+            "batch_size": TRAINING["batch_size"],
 
-    writer = csv.writer(f)
+            "epochs": TRAINING["epochs"],
 
+            "optimizer": "SGD",
 
+            "learning_rate": TRAINING["learning_rate"],
 
-    writer.writerow([
+            "momentum": TRAINING["momentum"],
 
-        "epoch",
+            "weight_decay": TRAINING["weight_decay"],
 
-        "total_loss",
+            "seed": SEED,
 
-        "loss_classifier",
+            "num_workers": TRAINING["num_workers"],
 
-        "loss_box_reg",
+        },
 
-        "loss_mask",
+        "hardware": {
 
-        "loss_objectness",
+            "platform": "ASU Sol",
 
-        "loss_rpn_box_reg",
+            "gpu": (
 
-        "epoch_time_seconds",
+                torch.cuda.get_device_name(0)
 
-    ])
+                if torch.cuda.is_available()
 
+                else "CPU"
 
+            ),
 
-
-
-# ---------------------------------------------------------
-
-# Experiment summary
-
-# ---------------------------------------------------------
-
-
-
-print("=" * 70)
-
-print("Starting:", EXP_NAME)
-
-print("=" * 70)
-
-
-
-print("Device:", device)
-
-print("GPU:", torch.cuda.get_device_name(0))
-
-print("PyTorch:", torch.__version__)
-
-print("CUDA runtime:", torch.version.cuda)
-
-
-
-print()
-
-
-
-print("Training images:", len(band8_train_dataset))
-
-print("Validation images:", len(band8_val_dataset))
-
-print("Batch size:", exp_config["training"]["batch_size"])
-
-print("Epochs:", num_epochs)
-
-print("Seed:", SEED)
-
-
-
-print()
-
-
-
-print("Experiment directory:", experiment_dir)
-
-print("Checkpoint directory:", checkpoint_dir)
-
-print("Training log:", log_path)
-
-
-
-print("=" * 70)
-
-
-
-
-
-# ---------------------------------------------------------
-
-# Training
-
-# ---------------------------------------------------------
-
-
-
-for epoch in range(1, num_epochs + 1):
-
-
-
-    model.train()
-
-
-
-    epoch_start = time.time()
-
-
-
-    running_losses = {
-
-        "loss_classifier": 0.0,
-
-        "loss_box_reg": 0.0,
-
-        "loss_mask": 0.0,
-
-        "loss_objectness": 0.0,
-
-        "loss_rpn_box_reg": 0.0,
-
-        "total_loss": 0.0,
+        },
 
     }
 
 
 
-    num_batches = 0
+
+
+def move_batch_to_device(images, targets, device):
+
+    images = [image.to(device, non_blocking=True) for image in images]
 
 
 
-    for batch_idx, (images, targets) in enumerate(
+    targets = [
 
-        train_loader,
+        {
 
-        start=1,
+            key: value.to(device, non_blocking=True)
 
-    ):
+            if torch.is_tensor(value)
 
+            else value
 
+            for key, value in target.items()
 
-        images = [
+        }
 
-            image.to(
+        for target in targets
 
-                device,
-
-                non_blocking=True,
-
-            )
-
-            for image in images
-
-        ]
+    ]
 
 
 
-        targets = [
-
-            {
-
-                key: (
-
-                    value.to(
-
-                        device,
-
-                        non_blocking=True,
-
-                    )
-
-                    if torch.is_tensor(value)
-
-                    else value
-
-                )
-
-                for key, value in target.items()
-
-            }
-
-            for target in targets
-
-        ]
+    return images, targets
 
 
 
-        optimizer.zero_grad(
-
-            set_to_none=True
-
-        )
 
 
+def train_one_epoch(model, loader, optimizer, device, epoch):
 
-        # Forward pass
+    model.train()
 
-        loss_dict = model(
+    totals = {name: 0.0 for name in LOSS_NAMES}
 
-            images,
-
-            targets,
-
-        )
+    totals["total_loss"] = 0.0
 
 
 
-        loss = sum(
-
-            loss_dict.values()
-
-        )
+    start = time.time()
 
 
 
-        # Safety check
+    for batch_idx, (images, targets) in enumerate(loader, start=1):
+
+        images, targets = move_batch_to_device(images, targets, device)
+
+
+
+        optimizer.zero_grad(set_to_none=True)
+
+        loss_dict = model(images, targets)
+
+        loss = sum(loss_dict.values())
+
+
 
         if not torch.isfinite(loss):
 
             raise RuntimeError(
 
-                "Non-finite loss detected "
+                f"Non-finite loss at epoch {epoch}, "
 
-                f"at epoch {epoch}, "
-
-                f"batch {batch_idx}: "
-
-                f"{loss.item()}"
+                f"batch {batch_idx}: {loss.item()}"
 
             )
 
 
 
-        # Backpropagation
-
         loss.backward()
-
-
 
         optimizer.step()
 
 
 
-        # Record losses
+        for name in LOSS_NAMES:
 
-        running_losses["loss_classifier"] += (
+            totals[name] += loss_dict[name].item()
 
-            loss_dict["loss_classifier"].item()
-
-        )
-
-
-
-        running_losses["loss_box_reg"] += (
-
-            loss_dict["loss_box_reg"].item()
-
-        )
-
-
-
-        running_losses["loss_mask"] += (
-
-            loss_dict["loss_mask"].item()
-
-        )
-
-
-
-        running_losses["loss_objectness"] += (
-
-            loss_dict["loss_objectness"].item()
-
-        )
-
-
-
-        running_losses["loss_rpn_box_reg"] += (
-
-            loss_dict["loss_rpn_box_reg"].item()
-
-        )
-
-
-
-        running_losses["total_loss"] += (
-
-            loss.item()
-
-        )
-
-
-
-        num_batches += 1
+        totals["total_loss"] += loss.item()
 
 
 
@@ -784,9 +427,9 @@ for epoch in range(1, num_epochs + 1):
 
             print(
 
-                f"Epoch {epoch}/{num_epochs} "
+                f"Epoch {epoch}/{TRAINING['epochs']} "
 
-                f"| Batch {batch_idx}/{len(train_loader)} "
+                f"| Batch {batch_idx}/{len(loader)} "
 
                 f"| Loss {loss.item():.4f}",
 
@@ -796,115 +439,63 @@ for epoch in range(1, num_epochs + 1):
 
 
 
+    averages = {
 
+        name: value / len(loader)
 
-    # -----------------------------------------------------
-
-    # Epoch averages
-
-    # -----------------------------------------------------
-
-
-
-    epoch_losses = {
-
-        key: value / num_batches
-
-        for key, value in running_losses.items()
+        for name, value in totals.items()
 
     }
 
 
 
-    epoch_time = (
-
-        time.time() - epoch_start
-
-    )
-
-
-
-    print(
-
-        f"Epoch {epoch}/{num_epochs} complete "
-
-        f"| Total loss: "
-
-        f"{epoch_losses['total_loss']:.4f} "
-
-        f"| Time: {epoch_time:.1f}s",
-
-        flush=True,
-
-    )
+    return averages, time.time() - start
 
 
 
 
 
-    # -----------------------------------------------------
+def initialize_log():
 
-    # Save training log
-
-    # -----------------------------------------------------
+    columns = ["epoch", "total_loss", *LOSS_NAMES, "epoch_time_seconds"]
 
 
 
-    with open(
+    with open(LOG_PATH, "w", newline="") as f:
 
-        log_path,
-
-        "a",
-
-        newline="",
-
-    ) as f:
-
-
-
-        writer = csv.writer(f)
-
-
-
-        writer.writerow([
-
-            epoch,
-
-            epoch_losses["total_loss"],
-
-            epoch_losses["loss_classifier"],
-
-            epoch_losses["loss_box_reg"],
-
-            epoch_losses["loss_mask"],
-
-            epoch_losses["loss_objectness"],
-
-            epoch_losses["loss_rpn_box_reg"],
-
-            epoch_time,
-
-        ])
+        csv.writer(f).writerow(columns)
 
 
 
 
 
-    # -----------------------------------------------------
+def append_log(epoch, losses, elapsed):
 
-    # Save checkpoint
+    row = [
 
-    # -----------------------------------------------------
+        epoch,
+
+        losses["total_loss"],
+
+        *[losses[name] for name in LOSS_NAMES],
+
+        elapsed,
+
+    ]
 
 
 
-    checkpoint_path = (
+    with open(LOG_PATH, "a", newline="") as f:
 
-        checkpoint_dir
+        csv.writer(f).writerow(row)
 
-        / f"epoch_{epoch:02d}.pth"
 
-    )
+
+
+
+def save_checkpoint(model, optimizer, epoch, losses, config):
+
+    path = CHECKPOINT_DIR / f"epoch_{epoch:02d}.pth"
 
 
 
@@ -914,60 +505,163 @@ for epoch in range(1, num_epochs + 1):
 
             "epoch": epoch,
 
-            "model_state_dict": (
+            "model_state_dict": model.state_dict(),
 
-                model.state_dict()
+            "optimizer_state_dict": optimizer.state_dict(),
 
-            ),
-
-            "optimizer_state_dict": (
-
-                optimizer.state_dict()
-
-            ),
-
-            "loss": (
-
-                epoch_losses["total_loss"]
-
-            ),
+            "loss": losses["total_loss"],
 
             "seed": SEED,
 
             "experiment": EXP_NAME,
 
-            "config": exp_config,
+            "config": config,
 
         },
 
-        checkpoint_path,
+        path,
 
     )
 
 
+
+    return path
+
+
+
+
+
+def main():
+
+    set_seed()
+
+
+
+    if not torch.cuda.is_available():
+
+        raise RuntimeError("EXP002 is intended to run on a CUDA GPU.")
+
+
+
+    device = torch.device("cuda")
+
+
+
+    EXPERIMENT_DIR.mkdir(parents=True, exist_ok=True)
+
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+
+    config = experiment_config()
+
+    with open(EXPERIMENT_DIR / "config.json", "w") as f:
+
+        json.dump(config, f, indent=2)
+
+
+
+    train_dataset, val_dataset, train_loader, _ = build_dataloaders()
+
+
+
+    model = build_8band_maskrcnn(pretrained=True).to(device)
+
+    optimizer = torch.optim.SGD(
+
+        model.parameters(),
+
+        lr=TRAINING["learning_rate"],
+
+        momentum=TRAINING["momentum"],
+
+        weight_decay=TRAINING["weight_decay"],
+
+    )
+
+
+
+    initialize_log()
+
+
+
+    print(f"Starting {EXP_NAME}")
+
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     print(
 
-        "Checkpoint saved:",
+        f"Train: {len(train_dataset)} | "
 
-        checkpoint_path,
+        f"Validation: {len(val_dataset)} | "
 
-        flush=True,
+        f"Batch: {TRAINING['batch_size']} | "
+
+        f"Epochs: {TRAINING['epochs']}"
 
     )
 
 
 
-    print()
+    for epoch in range(1, TRAINING["epochs"] + 1):
+
+        losses, elapsed = train_one_epoch(
+
+            model,
+
+            train_loader,
+
+            optimizer,
+
+            device,
+
+            epoch,
+
+        )
+
+
+
+        append_log(epoch, losses, elapsed)
+
+        checkpoint = save_checkpoint(
+
+            model,
+
+            optimizer,
+
+            epoch,
+
+            losses,
+
+            config,
+
+        )
+
+
+
+        print(
+
+            f"Epoch {epoch}/{TRAINING['epochs']} "
+
+            f"| Loss {losses['total_loss']:.4f} "
+
+            f"| {elapsed:.1f}s "
+
+            f"| Saved {checkpoint.name}",
+
+            flush=True,
+
+        )
+
+
+
+    print(f"Training complete. Log: {LOG_PATH}")
 
 
 
 
 
-print("=" * 70)
+if __name__ == "__main__":
 
-print("Training completed.")
+    main()
 
-print("Training log:", log_path)
-
-print("=" * 70)

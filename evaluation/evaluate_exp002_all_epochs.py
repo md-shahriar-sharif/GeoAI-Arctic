@@ -1,7 +1,7 @@
-import os
-import csv
 
 import json
+
+import os
 
 import sys
 
@@ -43,69 +43,41 @@ from model.model_8band import build_8band_maskrcnn
 
 
 
-# ---------------------------------------------------------
-
-# Paths
-
-# ---------------------------------------------------------
-
-
-
 EXP_NAME = "EXP002_8Band_MaskRCNN_SOL"
-
-
-
-release_root = Path(
-
-    os.environ.get(
-
-        "GEOAI_ARCTIC_DATA",
-
-        PROJECT_ROOT / "competition_release",
-
-    )
-
-)
-
-split_path = PROJECT_ROOT / "data" / "split_v1_groupaware.csv"
-
-preprocessing_path = PROJECT_ROOT / "data" / "preprocessing_v1.json"
-
-
-
-experiment_dir = PROJECT_ROOT / "experiments" / EXP_NAME
-
-checkpoint_dir = experiment_dir / "checkpoints"
-
-prediction_dir = experiment_dir / "predictions"
-
-
-
-val_gt_path = experiment_dir / "instances_val.json"
-
-results_path = experiment_dir / "checkpoint_evaluation.csv"
-
-
-
-prediction_dir.mkdir(parents=True, exist_ok=True)
-
-
 
 MASK_THRESHOLD = 0.5
 
 
 
+DATA_ROOT = Path(
+
+    os.environ.get("GEOAI_ARCTIC_DATA", PROJECT_ROOT / "competition_release")
+
+)
+
+SPLIT_PATH = PROJECT_ROOT / "data" / "split_v1_groupaware.csv"
+
+PREPROCESSING_PATH = PROJECT_ROOT / "data" / "preprocessing_v1.json"
 
 
-# ---------------------------------------------------------
 
-# Dataset wrapper: EXP002 8-band preprocessing
+EXPERIMENT_DIR = PROJECT_ROOT / "experiments" / EXP_NAME
 
-# ---------------------------------------------------------
+CHECKPOINT_DIR = EXPERIMENT_DIR / "checkpoints"
+
+PREDICTION_DIR = EXPERIMENT_DIR / "predictions"
+
+VAL_GT_PATH = EXPERIMENT_DIR / "instances_val.json"
+
+RESULTS_PATH = EXPERIMENT_DIR / "checkpoint_evaluation.csv"
 
 
 
-class RTSExtendedDataset(Dataset):
+
+
+class RTS8BandDataset(Dataset):
+
+    """Apply EXP002 preprocessing to a raw RTS dataset."""
 
 
 
@@ -127,235 +99,243 @@ class RTSExtendedDataset(Dataset):
 
         image, target = self.raw_dataset[idx]
 
+        image = image.numpy().transpose(1, 2, 0)
 
+        image = self.preprocessor.prepare_8band_maskrcnn(image)
 
-        image_hwc = image.numpy().transpose(1, 2, 0)
-
-
-
-        image_8band = self.preprocessor.prepare_8band_maskrcnn(
-
-            image_hwc
-
-        )
-
-
-
-        image_tensor = torch.from_numpy(image_8band).float()
-
-
-
-        return image_tensor, target
+        return torch.from_numpy(image).float(), target
 
 
 
 
 
-# ---------------------------------------------------------
+def build_validation_dataset():
 
-# Device
+    raw = RTSRawDataset(DATA_ROOT, SPLIT_PATH, fold="val")
 
-# ---------------------------------------------------------
+    preprocessor = RTS8BandPreprocessor(PREPROCESSING_PATH)
+
+    return RTS8BandDataset(raw, preprocessor)
 
 
 
-if not torch.cuda.is_available():
 
-    raise RuntimeError(
 
-        "CUDA GPU required for EXP002 checkpoint evaluation."
+def create_validation_ground_truth():
+
+    """Create a COCO annotation file containing validation images only."""
+
+    split = pd.read_csv(SPLIT_PATH)
+
+    val_ids = set(
+
+        split.loc[split["fold"] == "val", "image_id"]
+
+        .astype(int)
+
+        .tolist()
 
     )
 
 
 
-device = torch.device("cuda")
+    full_gt = (
 
+        DATA_ROOT
 
+        / "train"
 
-print("Device:", device)
+        / "annotations"
 
-print("GPU:", torch.cuda.get_device_name(0))
+        / "instances_train.json"
 
+    )
 
 
 
+    with open(full_gt, "r") as f:
 
-# ---------------------------------------------------------
+        coco = json.load(f)
 
-# Validation dataset
 
-# ---------------------------------------------------------
 
+    val_gt = {
 
+        "images": [
 
-preprocessor = RTS8BandPreprocessor(
+            image
 
-    preprocessing_path
+            for image in coco["images"]
 
-)
+            if int(image["id"]) in val_ids
 
+        ],
 
+        "annotations": [
 
-val_raw_dataset = RTSRawDataset(
+            ann
 
-    release_root=release_root,
+            for ann in coco["annotations"]
 
-    split_csv=split_path,
+            if int(ann["image_id"]) in val_ids
 
-    fold="val",
+        ],
 
-)
+        "categories": coco["categories"],
 
+    }
 
 
-band8_val_dataset = RTSExtendedDataset(
 
-    val_raw_dataset,
+    with open(VAL_GT_PATH, "w") as f:
 
-    preprocessor,
+        json.dump(val_gt, f)
 
-)
 
 
+    return len(val_gt["images"]), len(val_gt["annotations"])
 
-print("Validation images:", len(band8_val_dataset))
 
 
 
 
+def load_checkpoint(epoch, device):
 
-# ---------------------------------------------------------
+    path = CHECKPOINT_DIR / f"epoch_{epoch:02d}.pth"
 
-# Create validation-only COCO ground truth
 
-# ---------------------------------------------------------
 
+    if not path.exists():
 
+        raise FileNotFoundError(f"Missing checkpoint: {path}")
 
-split_df = pd.read_csv(split_path)
 
 
+    checkpoint = torch.load(
 
-val_image_ids = set(
+        path,
 
-    split_df.loc[
+        map_location="cpu",
 
-        split_df["fold"] == "val",
+        weights_only=False,
 
-        "image_id"
+    )
 
-    ].astype(int).tolist()
 
-)
 
+    model = build_8band_maskrcnn(pretrained=False)
 
+    model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
-full_gt_path = (
+    model.to(device).eval()
 
-    release_root
 
-    / "train"
 
-    / "annotations"
+    return model
 
-    / "instances_train.json"
 
-)
 
 
 
-with open(full_gt_path, "r") as f:
+def predict(model, dataset, device):
 
-    coco_full = json.load(f)
+    """Run validation inference and return COCO segmentation predictions."""
 
+    predictions = []
 
+    start = time.time()
 
-val_images = [
 
-    img
 
-    for img in coco_full["images"]
+    with torch.no_grad():
 
-    if int(img["id"]) in val_image_ids
+        for idx in range(len(dataset)):
 
-]
+            image, target = dataset[idx]
 
+            image_id = int(target["image_id"].item())
 
 
-val_annotations = [
 
-    ann
+            output = model(
 
-    for ann in coco_full["annotations"]
+                [image.to(device, non_blocking=True)]
 
-    if int(ann["image_id"]) in val_image_ids
+            )[0]
 
-]
 
 
+            scores = output["scores"].detach().cpu().numpy()
 
-coco_val_gt = {
+            masks = output["masks"].detach().cpu().numpy()
 
-    "images": val_images,
 
-    "annotations": val_annotations,
 
-    "categories": coco_full["categories"],
+            for score, mask in zip(scores, masks[:, 0]):
 
-}
+                binary_mask = (mask >= MASK_THRESHOLD).astype(np.uint8)
 
 
 
-with open(val_gt_path, "w") as f:
+                if not binary_mask.any():
 
-    json.dump(coco_val_gt, f)
+                    continue
 
 
 
-print("Validation GT images:", len(val_images))
+                rle = mask_utils.encode(
 
-print("Validation GT annotations:", len(val_annotations))
+                    np.asfortranarray(binary_mask)
 
+                )
 
+                rle["counts"] = rle["counts"].decode("utf-8")
 
 
 
-# ---------------------------------------------------------
+                predictions.append(
 
-# Evaluation helper
+                    {
 
-# ---------------------------------------------------------
+                        "image_id": image_id,
 
+                        "category_id": 1,
 
+                        "segmentation": rle,
 
-def evaluate_predictions(prediction_path):
+                        "score": float(score),
 
+                    }
 
+                )
 
-    coco_gt = COCO(str(val_gt_path))
+
+
+            if (idx + 1) % 25 == 0:
+
+                print(f"Processed {idx + 1}/{len(dataset)}")
+
+
+
+    return predictions, time.time() - start
+
+
+
+
+
+def evaluate_coco(prediction_path):
+
+    """Evaluate segmentation predictions with the challenge-style settings."""
+
+    coco_gt = COCO(str(VAL_GT_PATH))
 
     coco_dt = coco_gt.loadRes(str(prediction_path))
 
 
 
-    evaluator = COCOeval(
-
-        coco_gt,
-
-        coco_dt,
-
-        iouType="segm",
-
-    )
-
-
-
-    # Match competition evaluator
+    evaluator = COCOeval(coco_gt, coco_dt, iouType="segm")
 
     evaluator.params.maxDets = [1, 5, 10]
-
-
 
     evaluator.params.areaRng = [
 
@@ -368,8 +348,6 @@ def evaluate_predictions(prediction_path):
         [2000, 1e10],
 
     ]
-
-
 
     evaluator.params.areaRngLbl = [
 
@@ -393,35 +371,33 @@ def evaluate_predictions(prediction_path):
 
 
 
-    stats = evaluator.stats
-
-
+    s = evaluator.stats
 
     return {
 
-        "mask_ap_internal_invalid": float(stats[0]),
+        "coco_ap_internal": float(s[0]),
 
-        "ap50": float(stats[1]),
+        "ap50": float(s[1]),
 
-        "ap75": float(stats[2]),
+        "ap75": float(s[2]),
 
-        "ap_small": float(stats[3]),
+        "ap_small": float(s[3]),
 
-        "ap_medium": float(stats[4]),
+        "ap_medium": float(s[4]),
 
-        "ap_large": float(stats[5]),
+        "ap_large": float(s[5]),
 
-        "ar1": float(stats[6]),
+        "ar1": float(s[6]),
 
-        "ar5": float(stats[7]),
+        "ar5": float(s[7]),
 
-        "ar10": float(stats[8]),
+        "ar10": float(s[8]),
 
-        "ar_small": float(stats[9]),
+        "ar_small": float(s[9]),
 
-        "ar_medium": float(stats[10]),
+        "ar_medium": float(s[10]),
 
-        "ar_large": float(stats[11]),
+        "ar_large": float(s[11]),
 
     }
 
@@ -429,514 +405,193 @@ def evaluate_predictions(prediction_path):
 
 
 
-# ---------------------------------------------------------
+def main():
 
-# Load training losses
+    if not torch.cuda.is_available():
 
-# ---------------------------------------------------------
-
-
-
-training_log_path = (
-
-    experiment_dir / "training_log.csv"
-
-)
+        raise RuntimeError("CUDA GPU required for checkpoint evaluation.")
 
 
 
-training_log = pd.read_csv(
+    device = torch.device("cuda")
 
-    training_log_path
-
-)
+    PREDICTION_DIR.mkdir(parents=True, exist_ok=True)
 
 
 
-loss_by_epoch = dict(
+    dataset = build_validation_dataset()
 
-    zip(
-
-        training_log["epoch"].astype(int),
-
-        training_log["total_loss"],
-
-    )
-
-)
+    n_images, n_annotations = create_validation_ground_truth()
 
 
 
+    training_log = pd.read_csv(EXPERIMENT_DIR / "training_log.csv")
 
+    loss_by_epoch = dict(
 
-# ---------------------------------------------------------
+        zip(
 
-# Evaluate every checkpoint
+            training_log["epoch"].astype(int),
 
-# ---------------------------------------------------------
+            training_log["total_loss"],
 
-
-
-results = []
-
-
-
-for epoch in range(1, 11):
-
-
-
-    print()
-
-    print("=" * 70)
-
-    print(f"Evaluating epoch {epoch:02d}")
-
-    print("=" * 70)
-
-
-
-    checkpoint_path = (
-
-        checkpoint_dir
-
-        / f"epoch_{epoch:02d}.pth"
+        )
 
     )
 
 
 
-    if not checkpoint_path.exists():
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
 
-        raise FileNotFoundError(
+    print(
 
-            f"Missing checkpoint: {checkpoint_path}"
+        f"Validation: {n_images} images, "
+
+        f"{n_annotations} RTS instances"
+
+    )
+
+
+
+    results = []
+
+
+
+    for epoch in range(1, 11):
+
+        print(f"\nEvaluating epoch {epoch:02d}")
+
+
+
+        model = load_checkpoint(epoch, device)
+
+        predictions, elapsed = predict(model, dataset, device)
+
+
+
+        prediction_path = (
+
+            PREDICTION_DIR
+
+            / f"val_predictions_epoch{epoch:02d}.json"
 
         )
 
 
 
-    # -----------------------------------------------------
+        with open(prediction_path, "w") as f:
 
-    # Recreate model
+            json.dump(predictions, f)
 
-    # -----------------------------------------------------
 
 
+        metrics = evaluate_coco(prediction_path)
 
-    # No COCO download is needed here because checkpoint
 
-    # contains the complete trained state dictionary.
 
-    model = build_8band_maskrcnn(
+        result = {
 
-        pretrained=False
+            "epoch": epoch,
 
-    )
+            "train_loss": float(loss_by_epoch[epoch]),
 
+            **metrics,
 
+            "predicted_instances": len(predictions),
 
-    checkpoint = torch.load(
+            "inference_time_seconds": elapsed,
 
-        checkpoint_path,
+        }
 
-        map_location="cpu",
+        results.append(result)
 
-        weights_only=False,
 
-    )
 
+        # Save after every checkpoint so partial progress is retained.
 
+        pd.DataFrame(results).to_csv(RESULTS_PATH, index=False)
 
-    model.load_state_dict(
 
-        checkpoint["model_state_dict"],
 
-        strict=True,
+        print(
 
-    )
+            f"Epoch {epoch:02d} "
 
+            f"| Loss {result['train_loss']:.4f} "
 
+            f"| COCO AP {result['coco_ap_internal']:.4f} "
 
-    model.to(device)
+            f"| AP50 {result['ap50']:.4f} "
 
-    model.eval()
+            f"| AP75 {result['ap75']:.4f} "
 
+            f"| Predictions {len(predictions)}"
 
+        )
 
-    # -----------------------------------------------------
 
-    # Validation inference
 
-    # -----------------------------------------------------
+        del model
 
+        torch.cuda.empty_cache()
 
 
-    coco_predictions = []
 
+    results = pd.DataFrame(results)
 
 
-    start_time = time.time()
 
+    columns = [
 
+        "epoch",
 
-    with torch.no_grad():
+        "train_loss",
 
+        "coco_ap_internal",
 
+        "ap50",
 
-        for idx in range(len(band8_val_dataset)):
+        "ap75",
 
+        "ap_small",
 
+        "ap_medium",
 
-            image, target = band8_val_dataset[idx]
+        "ap_large",
 
+    ]
 
 
-            image_id = int(
 
-                target["image_id"].item()
-
-            )
-
-
-
-            image_gpu = image.to(
-
-                device,
-
-                non_blocking=True,
-
-            )
-
-
-
-            output = model([image_gpu])[0]
-
-
-
-            scores = (
-
-                output["scores"]
-
-                .detach()
-
-                .cpu()
-
-                .numpy()
-
-            )
-
-
-
-            masks = (
-
-                output["masks"]
-
-                .detach()
-
-                .cpu()
-
-                .numpy()
-
-            )
-
-
-
-            for i in range(len(scores)):
-
-
-
-                mask_probability = masks[i, 0]
-
-
-
-                binary_mask = (
-
-                    mask_probability >= MASK_THRESHOLD
-
-                ).astype(np.uint8)
-
-
-
-                if binary_mask.sum() == 0:
-
-                    continue
-
-
-
-                rle = mask_utils.encode(
-
-                    np.asfortranarray(binary_mask)
-
-                )
-
-
-
-                rle["counts"] = (
-
-                    rle["counts"].decode("utf-8")
-
-                )
-
-
-
-                coco_predictions.append({
-
-                    "image_id": image_id,
-
-                    "category_id": 1,
-
-                    "segmentation": rle,
-
-                    "score": float(scores[i]),
-
-                })
-
-
-
-            if (idx + 1) % 25 == 0:
-
-                print(
-
-                    f"Processed {idx + 1}/"
-
-                    f"{len(band8_val_dataset)}"
-
-                )
-
-
-
-    inference_time = time.time() - start_time
-
-
-
-    # -----------------------------------------------------
-
-    # Save prediction JSON
-
-    # -----------------------------------------------------
-
-
-
-    prediction_path = (
-
-        prediction_dir
-
-        / f"val_predictions_epoch{epoch:02d}.json"
-
-    )
-
-
-
-    with open(prediction_path, "w") as f:
-
-        json.dump(coco_predictions, f)
-
-
+    print("\nCheckpoint evaluation complete")
 
     print(
 
-        "Predicted instances:",
+        results[columns].to_string(
 
-        len(coco_predictions),
+            index=False,
+
+            float_format=lambda x: f"{x:.4f}",
+
+        )
 
     )
 
-
+    print(f"\nResults saved: {RESULTS_PATH}")
 
     print(
 
-        f"Inference time: {inference_time:.1f}s"
+        "Note: final checkpoint selection should use the official "
+
+        "competition evaluator, not this internal COCO AP value."
 
     )
 
 
 
-    # -----------------------------------------------------
 
-    # COCO evaluation
 
-    # -----------------------------------------------------
+if __name__ == "__main__":
 
+    main()
 
-
-    metrics = evaluate_predictions(
-
-        prediction_path
-
-    )
-
-
-
-    result = {
-
-        "epoch": epoch,
-
-        "train_loss": float(
-
-            loss_by_epoch[epoch]
-
-        ),
-
-        **metrics,
-
-        "predicted_instances": len(
-
-            coco_predictions
-
-        ),
-
-        "inference_time_seconds": (
-
-            inference_time
-
-        ),
-
-    }
-
-
-
-    results.append(result)
-
-
-
-    # Save after every epoch so partial progress survives
-
-    pd.DataFrame(results).to_csv(
-
-        results_path,
-
-        index=False,
-
-    )
-
-
-
-    print(
-
-        f"EPOCH {epoch:02d} "
-
-        f"| Train loss: "
-
-        f"{result['train_loss']:.4f} "
-
-        f"| Mask AP: "
-
-        f"{result['mask_ap_internal_invalid']:.4f} "
-
-        f"| AP50: "
-
-        f"{result['ap50']:.4f} "
-
-        f"| AP75: "
-
-        f"{result['ap75']:.4f}"
-
-    )
-
-
-
-    # Release model memory before next checkpoint
-
-    del model
-
-    del checkpoint
-
-
-
-    torch.cuda.empty_cache()
-
-
-
-
-
-# ---------------------------------------------------------
-
-# Final summary
-
-# ---------------------------------------------------------
-
-
-
-results_df = pd.DataFrame(results)
-
-
-
-# Best checkpoint will be selected using the official competition evaluator.
-
-# Internal COCOeval stats[0] is not used for checkpoint selection.
-
-
-
-print()
-
-print("=" * 70)
-
-print("EXP002 CHECKPOINT EVALUATION COMPLETE")
-
-print("=" * 70)
-
-
-
-print(
-
-    results_df[
-
-        [
-
-            "epoch",
-
-            "train_loss",
-
-            "mask_ap",
-
-            "ap50",
-
-            "ap75",
-
-            "ap_small",
-
-            "ap_medium",
-
-            "ap_large",
-
-        ]
-
-    ].to_string(
-
-        index=False,
-
-        float_format=lambda x: f"{x:.4f}",
-
-    )
-
-)
-
-
-
-print()
-
-print(
-
-    "BEST 8-BAND CHECKPOINT:"
-
-    f" epoch_{int(best['epoch']):02d}.pth"
-
-)
-
-
-
-print(
-
-    f"Best Mask AP: {best['mask_ap']:.4f}"
-
-)
-
-
-
-print(
-
-    "Results saved:",
-
-    results_path,
-
-)
