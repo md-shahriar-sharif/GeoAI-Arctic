@@ -33,11 +33,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 
-from src.dataset import RTSRawDataset
+from data.dataset import RTSRawDataset
 
-from src.preprocessing_8band import RTS8BandPreprocessor
+from data.preprocessing_8band import RTS8BandPreprocessor
 
-from src.model_8band import build_8band_maskrcnn
+from model.model_8band import build_8band_maskrcnn
 
 
 
@@ -67,9 +67,9 @@ release_root = Path(
 
 )
 
-split_path = PROJECT_ROOT / "splits" / "split_v1_groupaware.csv"
+split_path = PROJECT_ROOT / "data" / "split_v1_groupaware.csv"
 
-preprocessing_path = PROJECT_ROOT / "configs" / "preprocessing_v1.json"
+preprocessing_path = PROJECT_ROOT / "data" / "preprocessing_v1.json"
 
 
 

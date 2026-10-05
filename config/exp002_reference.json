@@ -16,9 +16,9 @@
 
     "release_root": "competition_release",
 
-    "split_file": "splits/split_v1_groupaware.csv",
+    "split_file": "data/split_v1_groupaware.csv",
 
-    "preprocessing_file": "configs/preprocessing_v1.json",
+    "preprocessing_file": "data/preprocessing_v1.json",
 
     "train_fold": "train",
 

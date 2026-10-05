@@ -56,27 +56,27 @@ Model flow:
 
 
 
-- `src/dataset.py` — dataset loader
+- `data/dataset.py` — dataset loader
 
-- `src/preprocessing_8band.py` — 8-band preprocessing
+- `data/preprocessing_8band.py` — 8-band preprocessing
 
-- `src/model_8band.py` — 8-band Mask R-CNN model
+- `model/model_8band.py` — 8-band Mask R-CNN model
 
-- `src/train_exp002_8band.py` — baseline training
+- `train/train_exp002_8band.py` — baseline training
 
-- `src/evaluate_exp002_all_epochs.py` — checkpoint evaluation
+- `evaluation/evaluate_exp002_all_epochs.py` — checkpoint evaluation
 
-- `src/diagnose_exp002_small_rts.py` — small-RTS diagnostics
+- `evaluation/diagnose_exp002_small_rts.py` — small-RTS diagnostics
 
-- `src/diagnose_exp002_roi_stage.py` — RoI-stage diagnostics
+- `evaluation/diagnose_exp002_roi_stage.py` — RoI-stage diagnostics
 
-- `configs/preprocessing_v1.json` — training-fold preprocessing statistics
+- `data/preprocessing_v1.json` — training-fold preprocessing statistics
 
-- `configs/exp002_reference.json` — EXP002 reference configuration
+- `config/exp002_reference.json` — EXP002 reference configuration
 
-- `splits/split_v1_groupaware.csv` — fixed group-aware train/validation split
+- `data/split_v1_groupaware.csv` — fixed group-aware train/validation split
 
-- `docs/EXP002_results.md` — baseline results and notes
+- `results/EXP002_results.md` — baseline results and notes
 
 
 
@@ -144,7 +144,7 @@ The baseline preprocessing performs:
 
 
 
-The exact preprocessing statistics are stored in `configs/preprocessing_v1.json`.
+The exact preprocessing statistics are stored in `data/preprocessing_v1.json`.
 
 
 
@@ -196,7 +196,7 @@ From the repository root:
 
 
 
-    python src/train_exp002_8band.py
+    python train/train_exp002_8band.py
 
 
 
@@ -208,7 +208,7 @@ Evaluate the EXP002 checkpoints with:
 
 
 
-    python src/evaluate_exp002_all_epochs.py
+    python evaluation/evaluate_exp002_all_epochs.py
 
 
 
@@ -242,7 +242,7 @@ Run:
 
 
 
-    python src/diagnose_exp002_small_rts.py
+    python evaluation/diagnose_exp002_small_rts.py
 
 
 
@@ -250,7 +250,7 @@ and:
 
 
 
-    python src/diagnose_exp002_roi_stage.py
+    python evaluation/diagnose_exp002_roi_stage.py
 
 
 

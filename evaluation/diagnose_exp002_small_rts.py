@@ -14,9 +14,9 @@ from torch.utils.data import Dataset
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.dataset import RTSRawDataset
-from src.preprocessing_8band import RTS8BandPreprocessor
-from src.model_8band import build_8band_maskrcnn
+from data.dataset import RTSRawDataset
+from data.preprocessing_8band import RTS8BandPreprocessor
+from model.model_8band import build_8band_maskrcnn
 
 
 # =========================================================
@@ -34,8 +34,8 @@ release_root = Path(
     )
 
 )
-split_path = PROJECT_ROOT / "splits" / "split_v1_groupaware.csv"
-preprocessing_path = PROJECT_ROOT / "configs" / "preprocessing_v1.json"
+split_path = PROJECT_ROOT / "data" / "split_v1_groupaware.csv"
+preprocessing_path = PROJECT_ROOT / "data" / "preprocessing_v1.json"
 
 checkpoint_path = (
     PROJECT_ROOT
