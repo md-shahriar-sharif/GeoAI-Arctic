@@ -1,0 +1,75 @@
+
+# Python
+
+__pycache__/
+
+*.py[cod]
+
+*.pyo
+
+
+
+# Environments
+
+.venv/
+
+venv/
+
+env/
+
+.conda/
+
+
+
+# Challenge data
+
+competition_release/
+
+data/
+
+
+
+# Model checkpoints
+
+*.pth
+
+*.pt
+
+*.ckpt
+
+
+
+# Experiment outputs
+
+experiments/
+
+predictions/
+
+submissions/
+
+outputs/
+
+
+
+# Logs
+
+*.log
+
+
+
+# Jupyter
+
+.ipynb_checkpoints/
+
+
+
+# OS/editor files
+
+.DS_Store
+
+Thumbs.db
+
+.vscode/
+
+.idea/
+

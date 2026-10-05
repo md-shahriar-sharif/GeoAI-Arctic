@@ -1,0 +1,261 @@
+{
+
+  "experiment": {
+
+    "name": "EXP002_REFERENCE",
+
+    "description": "Reference configuration reproducing the established EXP002 8-band Mask R-CNN baseline",
+
+    "baseline": true
+
+  },
+
+
+
+  "data": {
+
+    "release_root": "competition_release",
+
+    "split_file": "splits/split_v1_groupaware.csv",
+
+    "preprocessing_file": "configs/preprocessing_v1.json",
+
+    "train_fold": "train",
+
+    "val_fold": "val",
+
+    "train_images": 605,
+
+    "val_images": 151
+
+  },
+
+
+
+  "input": {
+
+    "channels": 8,
+
+    "bands": [
+
+      "red",
+
+      "green",
+
+      "blue",
+
+      "ndvi",
+
+      "relative_elevation",
+
+      "shaded_relief",
+
+      "nir",
+
+      "ndwi"
+
+    ],
+
+    "nan_policy": "training-band mean imputation",
+
+    "normalization": "training-fold per-band z-score"
+
+  },
+
+
+
+  "model": {
+
+    "architecture": "Mask R-CNN",
+
+    "backbone": "ResNet-50-FPN",
+
+    "initialization": "COCO pretrained",
+
+    "num_classes": 2,
+
+
+
+    "modifications": {
+
+      "multilevel_roi": {
+
+        "enabled": false
+
+      },
+
+
+
+      "context_roi": {
+
+        "enabled": false,
+
+        "scale": 1.0
+
+      },
+
+
+
+      "magnification": {
+
+        "enabled": false
+
+      },
+
+
+
+      "attention": {
+
+        "enabled": false
+
+      },
+
+
+
+      "rpn_modification": {
+
+        "enabled": false
+
+      },
+
+
+
+      "mask_refinement": {
+
+        "enabled": false
+
+      }
+
+    }
+
+  },
+
+
+
+  "training": {
+
+    "batch_size": 2,
+
+    "epochs": 10,
+
+    "optimizer": "SGD",
+
+    "learning_rate": 0.005,
+
+    "momentum": 0.9,
+
+    "weight_decay": 0.0005,
+
+    "seed": 42,
+
+    "num_workers": 2,
+
+    "deterministic": true
+
+  },
+
+
+
+  "evaluation": {
+
+    "mask_threshold": 0.5,
+
+    "max_detections": [
+
+      1,
+
+      5,
+
+      10
+
+    ],
+
+    "area_ranges": {
+
+      "small": [
+
+        0,
+
+        300
+
+      ],
+
+      "medium": [
+
+        300,
+
+        2000
+
+      ],
+
+      "large": [
+
+        2000,
+
+        10000000000.0
+
+      ]
+
+    },
+
+    "official_mask_ap_max_dets": 10
+
+  },
+
+
+
+  "diagnostics": {
+
+    "enabled": true,
+
+    "rpn_iou_thresholds": [
+
+      0.3,
+
+      0.5,
+
+      0.7
+
+    ],
+
+    "small_area_bins": [
+
+      [
+
+        10,
+
+        49
+
+      ],
+
+      [
+
+        50,
+
+        99
+
+      ],
+
+      [
+
+        100,
+
+        199
+
+      ],
+
+      [
+
+        200,
+
+        299
+
+      ]
+
+    ],
+
+    "roi_stage_diagnostic": true
+
+  }
+
+}

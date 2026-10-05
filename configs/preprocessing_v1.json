@@ -1,0 +1,35 @@
+{
+  "bands": [
+    "red",
+    "green",
+    "blue",
+    "ndvi",
+    "relative_elevation",
+    "shaded_relief",
+    "nir",
+    "ndwi"
+  ],
+  "mean": [
+    92.17476062168929,
+    95.96806492101818,
+    77.20199447447075,
+    0.3892093351472652,
+    0.01011046160775924,
+    164.78715031013655,
+    2217.7118949327128,
+    -0.3743853446224185
+  ],
+  "std": [
+    37.47191980358031,
+    31.046179161868828,
+    30.974762897560613,
+    0.38097807481710333,
+    1.3971323038230894,
+    11.083534208574065,
+    878.2002598024288,
+    0.403701769649913
+  ],
+  "nan_policy": "replace non-finite values with training-band mean",
+  "normalization": "(x - training_mean) / training_std",
+  "statistics_source": "split_v1_groupaware.csv, fold=train, 605 images"
+}

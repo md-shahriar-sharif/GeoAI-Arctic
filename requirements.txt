@@ -1,0 +1,13 @@
+
+numpy
+
+pandas
+
+torch
+
+torchvision
+
+pycocotools
+
+Pillow
+
